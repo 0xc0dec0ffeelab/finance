@@ -5,6 +5,8 @@ VisualStudioVersion = 17.8.34330.188
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "finance-dotnet", "finance-dotnet.csproj", "{ACC5F2C3-6563-464D-BDCD-0CE8E9A7CD82}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "notification", "..\notification\notification.csproj", "{782A53F2-35FD-4BE5-B62E-14C872C16047}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -15,6 +17,10 @@ Global
 		{ACC5F2C3-6563-464D-BDCD-0CE8E9A7CD82}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{ACC5F2C3-6563-464D-BDCD-0CE8E9A7CD82}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{ACC5F2C3-6563-464D-BDCD-0CE8E9A7CD82}.Release|Any CPU.Build.0 = Release|Any CPU
+		{782A53F2-35FD-4BE5-B62E-14C872C16047}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{782A53F2-35FD-4BE5-B62E-14C872C16047}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{782A53F2-35FD-4BE5-B62E-14C872C16047}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{782A53F2-35FD-4BE5-B62E-14C872C16047}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

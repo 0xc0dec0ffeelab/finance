@@ -1,0 +1,226 @@
+services:
+  # Postgres Database
+  postgres-svc:
+    image: postgres
+    restart: always
+    container_name: postgres-svc
+    # set shared memory limit when using docker-compose
+    shm_size: 128mb
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    ports:
+      - "${POSTGRES_PORT}:5432" # Postgres port
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  # .NET 8 Application
+  dotnet-app:
+    build:
+      context: .
+      dockerfile: ./finance-dotnet/Dockerfile
+      args:
+        GITHUB_USERNAME: ${GITHUB_USERNAME}
+        GITHUB_TOKEN: ${GITHUB_TOKEN}
+    container_name: dotnet-app
+    environment:
+      ASPNETCORE_URLS: http://+:5000
+      DOTNET_LOG_LEVEL: Information
+      ConnectionStrings__Postgres: Host=postgres-svc;Port=5432;Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD};Database=${POSTGRES_DB}
+      ConnectionStrings__Minio: minio-svc:9000
+      OpenTelemetry__ExporterOtlpLogEndpoint: http://opentelemetry-collector-svc:4318/v1/logs
+      ECPay__ReturnURL: ${ECPay_ReturnURL}
+      ECPay__OrderResultURL: ${ECPay_OrderResultURL}
+      ECPay__ClientBackURL: ${ECPay_ClientBackURL}
+      Domain: ${Domain}
+      Minio__AccessKey: ${MINIO_USER}
+      Minio__SecretKey: ${MINIO_PASSWORD}
+      Kafka__BootstrapServers: kafka-svc:29092
+      Kafka__Email__Topic: email
+    ports:
+      - "${DOTNET_APP_PORT}:5000" # .NET App port
+    depends_on:
+      - postgres-svc
+      - opentelemetry-collector-svc
+
+  notification-worker:
+    build:
+      context: .
+      dockerfile: ./notification/Dockerfile
+      args:
+        GITHUB_USERNAME: ${GITHUB_USERNAME}
+        GITHUB_TOKEN: ${GITHUB_TOKEN}
+    container_name: notification-worker
+    environment:
+      ASPNETCORE_URLS: http://+:5000
+      DOTNET_LOG_LEVEL: Information
+      Email__Sender: ${NOTIFICATION_EMAIL_SENDER}
+      Email__HostName: ${POSTFIX_HOSTNAME}
+      Kafka__BootstrapServers: kafka-svc:29092
+      Kafka__Email__Topic: email
+      Kafka__Email__GroupId: worker-group
+    ports:
+      - "${NOTIFICATION_WORKER_PORT}:5000"
+
+  # Loki (Log storage)
+  loki-svc:
+    image: grafana/loki:3.3.2
+    container_name: loki-svc
+    ports:
+      - "3100" # Loki API port
+    command: -config.expand-env=true -config.file=/etc/loki/local-config.yaml
+    environment:
+      MINIO_USER: ${MINIO_USER}
+      MINIO_PASSWORD: ${MINIO_PASSWORD}
+      MINIO_PORT: ${MINIO_PORT}
+    volumes:
+      - ./loki-config.yaml:/etc/loki/local-config.yaml
+    depends_on:
+      - minio-svc
+
+  postgres-grafana-svc:
+    image: postgres
+    container_name: postgres-grafana-svc
+    # set shared memory limit when using docker-compose
+    shm_size: 128mb
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_GRAFANA_DB}
+    ports:
+      - "${POSTGRES_GRAFANA_PORT}:5432"
+    volumes:
+      - postgres_grafana_data:/var/lib/postgresql/data
+  # Grafana (Visualization)
+  grafana-svc:
+    image: grafana/grafana
+    container_name: grafana-svc
+    ports:
+      - "${GRAFANA_PORT}:3000" # Grafana UI port
+    environment:
+      GF_DATABASE_TYPE: postgres
+      GF_DATABASE_HOST: postgres-grafana-svc:5432
+      GF_DATABASE_NAME: ${POSTGRES_GRAFANA_DB}
+      GF_DATABASE_USER: ${GF_SECURITY_ADMIN_USER}
+      GF_DATABASE_PASSWORD: ${GF_SECURITY_ADMIN_PASSWORD}
+    depends_on:
+      - postgres-grafana-svc
+      - loki-svc
+    entrypoint:
+    - sh
+    - -euc
+    - |
+      mkdir -p /etc/grafana/provisioning/datasources
+      cat <<EOF > /etc/grafana/provisioning/datasources/ds.yaml
+      apiVersion: 1
+      datasources:
+      - name: Loki
+        type: loki
+        access: proxy
+        orgId: 1
+        url: http://loki-svc:3100
+        basicAuth: false
+        isDefault: true
+        version: 1
+        editable: false
+      EOF
+      /run.sh
+
+  # OpenTelemetry Collector
+  opentelemetry-collector-svc:
+    image: ghcr.io/open-telemetry/opentelemetry-collector-releases/opentelemetry-collector-contrib:latest
+    container_name: opentelemetry-collector-svc
+    ports:
+      - "4318" # OTLP HTTP port
+    volumes:
+      - ./otel-collector-config.yaml:/etc/otel-collector-config.yaml
+    environment:
+      OTEL_LOG_LEVEL: debug
+    command:
+      - "--config=/etc/otel-collector-config.yaml"
+    depends_on:
+      - loki-svc
+
+  # MiniO (Object Storage)
+  minio-svc:
+    image: minio/minio
+    container_name: minio-svc
+    ports:
+      - "${MINIO_PORT}:9000" # MiniO API port
+      - "${MINIO_CONSOLE_PORT}:9001" # MiniO Console port for web ui
+    environment:
+      MINIO_ROOT_USER: ${MINIO_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_PASSWORD}
+    command: server /data --console-address ":9001" # 9001 container port
+    volumes:
+      - minio_data:/data
+
+  # Kafka (Kraft mode in single node cluster)
+  kafka-svc:
+    image: confluentinc/cp-kafka:latest
+    container_name: kafka-svc
+    ports:
+      - "${KAFKA_CLIENT_PORT}:9092"  # Kafka client
+    environment:
+      KAFKA_KRAFT_MODE: "true"
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://kafka-svc:29092,CONTROLLER://kafka-svc:29093,PLAINTEXT_HOST://0.0.0.0:9092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka-svc:29092,PLAINTEXT_HOST://localhost:${KAFKA_CLIENT_PORT}
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka-svc:29093
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LOG_RETENTION_HOURS: 1  # keep logs for 1 hour.
+      KAFKA_LOG_CLEANER_ENABLE: "true"
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0  # no delay for consumer rebalancing.
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1 # one broker, one replica
+      KAFKA_CONFLUENT_LICENSE_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_CONFLUENT_BALANCER_TOPIC_REPLICATION_FACTOR: 1
+      CLUSTER_ID: ${KAFKA_CLUSTER_ID}
+    volumes:
+      - kafka_data:/var/lib/kafka/data
+  
+  kafka-ui-svc:
+    container_name: kafka-ui-svc
+    image: provectuslabs/kafka-ui:latest
+    ports:
+      - "${KAFKA_UI_PORT}:8080"
+    environment:
+      DYNAMIC_CONFIG_ENABLED: "true"    
+      KAFKA_CLUSTERS_0_NAME: kafka_cluster
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka-svc:29092
+
+  # Redis
+  redis-svc:
+    image: redis:latest
+    container_name: redis-svc
+    ports:
+      - "${REDIS_PORT}:6379"
+    environment:
+      REDIS_ARGS: "--requirepass ${REDIS_PASSWORD}"
+    volumes:
+      - ./redis.conf:/usr/local/etc/redis/redis.conf
+      - redis_data:/data
+    command: ["redis-server", "/usr/local/etc/redis/redis.conf"]
+
+  # SMTP server
+  postfix-svc:
+    image: boky/postfix
+    container_name: postfix-svc
+    environment:
+      ALLOW_EMPTY_SENDER_DOMAINS: "1" # Allow any recipient
+      POSTFIX_myhostname: ${POSTFIX_HOSTNAME}
+    ports:
+      - "${POSTFIX_PORT}:587"
+
+volumes:
+  postgres_data:
+  minio_data:
+  postgres_grafana_data:
+  kafka_data:
+  redis_data:
