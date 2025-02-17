@@ -1,0 +1,31 @@
+﻿@* server side rendeing *@
+@using finance_dotnet.Backend.Models
+@model PaymentResultModel
+
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8" />
+    <title>finance</title>
+</head>
+<body>
+    <h1>Payment Result</h1>
+    <div id="paymentResult">
+        <div>Payment Status: @Model.RtnCode</div>
+        <div>MerchantTradeNo: @Model.MerchantTradeNo</div>
+        @if (Model.Errors.Any())
+        {
+        <div>Errors:
+            <ul>
+            @foreach (var error in Model.Errors)
+            {
+                <li>@error</li>
+            }
+            </ul>
+        </div>
+        }
+    </div>
+    <button id="backToIndex">Back to Home</button>
+    <script src="/frontend/js/paymentResult.js"></script>
+</body>
+</html>
